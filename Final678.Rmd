@@ -7,24 +7,89 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(rjson)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(stringr)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+
+data_Covid<- read.csv("United_States_COVID-19_Cases_and_Deaths_by_State_over_Time_-_ARCHIVED.csv")
+#002
+data_cond<- read.csv("Conditions_Contributing_to_COVID-19_Deaths__by_State_and_Age__Provisional_2020-2022.csv")
+
+summary(data_cond$Condition)
+
+#003
+data_nyc<- read.csv("New_York_City_Leading_Causes_of_Death.csv")
+
+#004
+data_retail<- read.csv("Retail_Food_Stores.csv")
+
+#005
+data_YTS<- read.csv(("Youth_Tobacco_Survey__YTS__Data.csv"))
+
+#006
+data_trip<- read.csv("Trips_by_Distance.csv.crdownload")
+
+#007
+data_MSRP<- read.csv("Car Features and MSRP.csv")
+
+#008
+data_newcar<- read.csv("New_cars_cleaned.csv")
+```
+
+```{r}
+data_newcar<- read.csv("New_cars_cleaned.csv")
+#New car
+data_newcar %>% distinct(Manufacturer)
+
+agg_Manufacturer<- data_newcar %>% group_by(Manufacturer) %>% 
+  summarise(total_count=n(),
+            .groups = 'drop') %>%
+  arrange(desc(total_count)) 
+agg_Manufacturer
+Top15<- agg_Manufacturer$Manufacturer[1:15]
+```
+
+
+```{r}
+#new car data cleaning
+data_new<- data_newcar %>% filter(Manufacturer %in% Top15 )
+
+#Check
+data_new %>% distinct(Manufacturer)
+```
+
+```{r}
+#newCar plot
+
+data_new %>% 
+  ggplot(aes(MSRP)) + 
+  geom_density() +
+  facet_wrap(~Manufacturer)
+ 
+```
+
+
+
+
+```{r}
+#new multilevel model
+# empty multilevel model
+mod_000 <- lmer(MSRP ~ 1 + (1 | Make), data = data_Top15)
+# details of results
+summary(mod_000)
+
+mod_001<- lmer(MSRP ~ Engine.HP + Year + (1 |Make)  , data= data_Top15)
+mod_001
+
+data_Top15 %>% distinct(Driven_Wheels) 
+
+```
+
+
