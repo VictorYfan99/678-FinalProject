@@ -6,90 +6,499 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, Warning = FALSE)
 library(rjson)
 library(dplyr)
 library(ggplot2)
+library(esquisse)
 library(lme4)
 library(stringr)
+library(car)
+library(PerformanceAnalytics)
+library(esquisse)
+library(rmarkdown)
+library(tinytex)
+library(gridExtra)
+library(broom)
+library(coefplot)
+library(r2mlm)
+library(merTools)
 ```
 
+Abstract
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-```{r}
+A car is a very typical Durable Consumption Goods. Due to the low number of purchases of consumer durables, consumers' purchasing behavior and decision-making are more deliberate. Cars in the auto market from a few thousand yuan to hundreds of thousands of yuan have their own special pricing strategies. This is also a very complex subject. Although the pricing of car brands tends to vary greatly, there are many rules involved. Often, consumers cannot take into account factors such as manufacturing processes, materials, technologies and designs. This report will try to find the logic behind some car brand pricing.
 
-data_Covid<- read.csv("United_States_COVID-19_Cases_and_Deaths_by_State_over_Time_-_ARCHIVED.csv")
-#002
-data_cond<- read.csv("Conditions_Contributing_to_COVID-19_Deaths__by_State_and_Age__Provisional_2020-2022.csv")
+Introduction
 
-summary(data_cond$Condition)
+The project will use a database obtained from Kaggle, and the 56 variables in this database are organized around some of the basic configuration of the car, such as the engine, transmission, chassis, braking system and safety equipment such as airbags and anti-lock braking system. Because the 56 possible explanatory variables are too large for the project's model, this report will devote more space to finding the most appropriate variables. First I will use data visualization to exclude some variables that may have little impact on the price, and then draw a correlation matrix to further exclude those variables that may cause multicollinearity. I will use the multilevel model to find the fixed effect between these factors and pricing and the random effect between different brands and years.
 
-#003
-data_nyc<- read.csv("New_York_City_Leading_Causes_of_Death.csv")
+Method
 
-#004
-data_retail<- read.csv("Retail_Food_Stores.csv")
-
-#005
-data_YTS<- read.csv(("Youth_Tobacco_Survey__YTS__Data.csv"))
-
-#006
-data_trip<- read.csv("Trips_by_Distance.csv.crdownload")
-
-#007
-data_MSRP<- read.csv("Car Features and MSRP.csv")
-
-#008
+```{r include=FALSE}
+#Data Imput
 data_newcar<- read.csv("New_cars_cleaned.csv")
-```
 
-```{r}
-data_newcar<- read.csv("New_cars_cleaned.csv")
-#New car
-data_newcar %>% distinct(Manufacturer)
-
+#Get the number of each manufacturer
 agg_Manufacturer<- data_newcar %>% group_by(Manufacturer) %>% 
   summarise(total_count=n(),
             .groups = 'drop') %>%
   arrange(desc(total_count)) 
-agg_Manufacturer
+
+#Get the top 15
 Top15<- agg_Manufacturer$Manufacturer[1:15]
-```
 
-
-```{r}
 #new car data cleaning
-data_new<- data_newcar %>% filter(Manufacturer %in% Top15 )
+data_New<- data_newcar %>% filter(Manufacturer %in% Top15 )
+data_New$Trans.Type[1:26048]<- as.numeric(data_New$Trans.Type[1:26048])
 
 #Check
-data_new %>% distinct(Manufacturer)
+#data_New %>% distinct(Manufacturer)
+
+# sum(is.na(data_New$Trans.Type))
+# sum(is.numeric(data_New$Trans.Type))
+# is.numeric(data_New$Trans.Type[1:26048])
+
+data_New$Trans.Type<- unclass(data_New$Trans.Type)
+
 ```
 
-```{r}
-#newCar plot
+Data Cleaning
 
-data_new %>% 
+The Dataset contains prices for around 32000 cars with 56 features. This covers products from 43 automotive brands. But when I looked at the data, I found that the number of occurrences of each brand was different, and in order to get more accurate results when analyzing, I decided to keep only the 15 brands with the largest sample as my first group. In the second group, I chose the year in which each car was manufactured. I would divide cars produced from 1990 to 2018 into three groups, each of which roughly includes cars of various brands and models produced in the past ten years. In the preliminary screening, I will also remove some columns that contain too many NA variables. There are also a lot of categorical variables that I'll remove some of them first. Here are some of the variables and explanations after initial screening:
+
++--------------------------------------+-----------------------------------------------------------+
+| column names                         | explanation                                               |
++:====================================:+:==========================================================+
+| MSRP                                 | Selling price in dollars                                  |
++--------------------------------------+-----------------------------------------------------------+
+| Manufacturer                         | Car brand                                                 |
++--------------------------------------+-----------------------------------------------------------+
+| EPA.Fuel.Economy.Est...City..MPG.    | City mileage                                              |
++--------------------------------------+-----------------------------------------------------------+
+| Passenger.Capacity                   | Capacity                                                  |
++--------------------------------------+-----------------------------------------------------------+
+| Base.Curb.Weight..lbs.               | Car weight in pounds                                      |
++--------------------------------------+-----------------------------------------------------------+
+| Wheelbase..in.                       | Distance between the centers of the front and rear wheels |
++--------------------------------------+-----------------------------------------------------------+
+| Track.Width..Front..in.              | Distance between the centerline of two frontwheels        |
++--------------------------------------+-----------------------------------------------------------+
+| Fuel.Tank.Capacity..Approx..gal.     | Tank capacity in gallons                                  |
++--------------------------------------+-----------------------------------------------------------+
+| SAE.Net.Torque...RPM                 | Net torque Nm                                             |
++--------------------------------------+-----------------------------------------------------------+
+| SAE.Net.Horsepower...RPM             | Net horsepower                                            |
++--------------------------------------+-----------------------------------------------------------+
+| Trans.Type                           | Number of gears                                           |
++--------------------------------------+-----------------------------------------------------------+
+| Turning.Diameter...Curb.to.Curb..ft. | Diameter of the smallest circular turn by the car         |
++--------------------------------------+-----------------------------------------------------------+
+| Model.year                           | Model year                                                |
++--------------------------------------+-----------------------------------------------------------+
+| Front.tire.width                     | Front tire width                                          |
++--------------------------------------+-----------------------------------------------------------+
+| Front.tire.aspect.ratio              | Front tire aspect ratio                                   |
++--------------------------------------+-----------------------------------------------------------+
+| Front.tire.rim.size                  | Front tire rim size                                       |
++--------------------------------------+-----------------------------------------------------------+
+| Assists                              | Average assists of player                                 |
++--------------------------------------+-----------------------------------------------------------+
+| Steals                               | Average steals of player                                  |
++--------------------------------------+-----------------------------------------------------------+
+| blocks                               | Average blocks of player                                  |
++--------------------------------------+-----------------------------------------------------------+
+| Turnovers                            | Average turnovers of player                               |
++--------------------------------------+-----------------------------------------------------------+
+| Fouls                                | Average fouls of player                                   |
++--------------------------------------+-----------------------------------------------------------+
+| Height                               | Height of player (foot)                                   |
++--------------------------------------+-----------------------------------------------------------+
+| weight                               | Weight of player (lb)                                     |
++--------------------------------------+-----------------------------------------------------------+
+| Draft_Pick                           | Draft pick of player                                      |
++--------------------------------------+-----------------------------------------------------------+
+
+```{r include=FALSE, warning=FALSE}
+##New dataframe with all possible predictor
+data_New1<- data_New %>% dplyr::select(c(
+"MSRP", "Manufacturer","EPA.Fuel.Economy.Est...City..MPG."   
+, "Passenger.Capacity", "Passenger.Doors", "Base.Curb.Weight..lbs.", "Passenger.Volume..ft..", "Wheelbase..in.", "Track.Width..Front..in." , "Height..Overall..in.", "Fuel.Tank.Capacity..Approx..gal." , "SAE.Net.Torque...RPM" , "SAE.Net.Horsepower...RPM", "Trans.Type" , "Corrosion.Miles.km", "Corrosion.Years","Drivetrain.Miles.km" , "Drivetrain.Years","Turning.Diameter...Curb.to.Curb..ft.",  "Stabilizer.Bar.Diameter...Front..in.", "Roadside.Assistance.Years" , "Roadside.Assistance.Miles.km", "Model.year", "Front.tire.width", "Front.tire.aspect.ratio" ,"Front.tire.rim.size" 
+))
+dplyr::select_if(data_New1, is.numeric)
+data_New1$Front.tire.width<- as.numeric(data_New1$Front.tire.width)
+data_New1$Trans.Type<- as.numeric(data_New1$Trans.Type)
+
+#delete columns with too much NA values 
+data_New1 %>%
+  dplyr::select(everything()) %>%  
+  summarise_all(funs(sum(is.na(.))))
+
+na_count<- c("Passenger.Volume..ft..", "Height..Overall..in.", "Stabilizer.Bar.Diameter...Front..in.", "Roadside.Assistance.Years")
+
+rep_count<- c("Corrosion.Miles.km", "Corrosion.Years", "Drivetrain.Miles.km", "Drivetrain.Years","Passenger.Doors", "Roadside.Assistance.Miles.km")
+
+data_New2<- data_New1 %>% dplyr::select(-na_count) %>% dplyr::select(-rep_count)
+
+#data_New1<- data_New1 %>% dplyr::select(-rep_count)
+
+```
+
+```{r include=FALSE}
+#Group Year
+group_year <- quantile(data_New2$Model.year, seq(0, 1, 0.1))
+g1 <- subset(data_New2, data_New2$Model.year >= 1990 & 
+               data_New2$Model.year < 2000) %>%
+  mutate(decades_group="1990-2000")
+g2 <- subset(data_New2 ,data_New2$Model.year >= 2000 &
+                     data_New2$Model.year < 2010) %>%
+  mutate(decades_group= "2000-2009")
+g3 <- subset(data_New2 ,data_New2$Model.year >= 2010 &
+                     data_New2$Model.year < 2019) %>%
+  mutate(decades_group= "2010-2018")
+
+data_New3<- rbind(g1, g2, g3)
+```
+
+EDA
+
+Distribution of MSRP for 15 manufacturer
+
+```{r echo= FALSE, warning=FALSE}
+#newCar plot
+data_New2 %>% 
   ggplot(aes(MSRP)) + 
   geom_density() +
   facet_wrap(~Manufacturer)
  
 ```
 
+From the figure above, we can see some brand pricing differences. Some Japanese brands such as Honda, Mazda, and Subaru are mostly concentrated in the lower price area, while prices like Audi, BMW, and Mercedes-Benz are more fragmented.
 
-
-
-```{r}
-#new multilevel model
-# empty multilevel model
-mod_000 <- lmer(MSRP ~ 1 + (1 | Make), data = data_Top15)
-# details of results
-summary(mod_000)
-
-mod_001<- lmer(MSRP ~ Engine.HP + Year + (1 |Make)  , data= data_Top15)
-mod_001
-
-data_Top15 %>% distinct(Driven_Wheels) 
+```{r echo= FALSE, warning=FALSE}
+#correlation before adjust.
+data_New3<- data_New3%>% relocate(Trans.Type, .after = Manufacturer)
+chart.Correlation(data_New2[, 4: 16], histogram=TRUE, pch=20)
 
 ```
 
+According to the correlation matrix, we can decided which explaining variables to included in the multilevel model. I assume setting the threshold to be 0.65 would be appropriate for this model. Then some of the explaining variable would need to be dropped. "Torque and Horsepower" is highly correlated, I decided to drop the torque. "Wheel base in. and Turning diameter" also has a very high correlation parameter 0.92. I would drop the turning diameter(crub to curb ft.). And other variables that have higher correlation parameters are front tire width, base curb weight and wheel base.
 
+```{r echo= FALSE, warning=FALSE}
+#Check the correlation after adjust.
+cor_drop<- c("SAE.Net.Torque...RPM", "Turning.Diameter...Curb.to.Curb..ft.","Fuel.Tank.Capacity..Approx..gal.", "Front.tire.width",  "Model.year","Base.Curb.Weight..lbs.","Wheelbase..in.")
+data_New4<- data_New3 %>% dplyr::select(-cor_drop)
+chart.Correlation(data_New4[, 3: 9], histogram=TRUE, pch=20)
+
+```
+
+After the ajustment, all the correlations drops below the 0.65 threshold. Next, we can perform further analysis and screening.
+
+Pick predictor
+
+```{r echo= FALSE, warning=FALSE, fig.height=4, fig.width=8}
+##Pick predictor
+#MSRP VS Horsepower
+par(mfrow=c(1,2))
+HP_make <- ggplot( data = data_New3)+ 
+  aes(x = log(SAE.Net.Horsepower...RPM + 1), y = log(MSRP), color = Manufacturer) + 
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Horsepower", x = "log(Horsepower)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+HP_year<- ggplot(data = data_New3)+
+  aes(x = log(SAE.Net.Horsepower...RPM + 1), y = log(MSRP), color = decades_group ) + 
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Horsepower", x = "log(Horsepower)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(HP_make, HP_year, ncol = 2)
+
+```
+
+The above two graphs are both graphs of the relationship between the price of the car and the horsepower of the car. The different colored straight lines on the left represent different car manufacturers. The different colored straight lines on the right represent different production years (in groups of ten years). In both charts, it is not difficult to see a positive correlation between price and horsepower. Whether it's a practical-focused family car or a performance car that pursues driving pleasure, more horsepower always reflects higher market pricing.
+
+```{r echo= FALSE, warning=FALSE, fig.height=4, fig.width=8}
+#Wheel Base
+
+WB_make <- ggplot( data = data_New3)+ 
+  aes(x = log(Wheelbase..in. + 1),y =log(MSRP), color = Manufacturer) +
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Wheel Base", x = "log(Wheel Base)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+WB_year<- ggplot(data = data_New3)+
+  aes(x = log(Wheelbase..in. + 1), y = log(MSRP), color = decades_group ) + 
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Wheel Base", x = "log(Wheel Base)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(WB_make, WB_year, ncol = 2)
+```
+
+The above two graphs reflect the relationship between wheel base and MSRP. Wheelbase is the distance between the centres of the front and rear wheels. It is a smaller parameter than a car's full length. Usually the comfort of the interior space and the stability of handling will be better with a long wheelbase, so I guess the wheelbase of the car will also be proportional to the pricing. However, from the first figure, it can be seen that the relationship between the two is not stable. Perhaps because some sports cars choose a shorter wheelbase for performance and handling, sports cars tend to have a higher MSRP. In view of Figure 1, I decided to remove the wheelbase variable from the final model.
+
+```{r echo= FALSE, warning=FALSE, fig.height=4, fig.width=8}
+#EPA.Fuel.Economy.Est...City..MPG
+#By Make
+MPG_make <- ggplot( data = data_New3)+ 
+  aes(x = log(EPA.Fuel.Economy.Est...City..MPG. + 1),y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Miles Per Gallon", x = "log(Miles Per Gallon)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+MPG_year <- ggplot( data = data_New3)+ 
+  aes(x = log(EPA.Fuel.Economy.Est...City..MPG. + 1),y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Miles Per Gallon", x = "log(Miles Per Gallon)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(MPG_make, MPG_year, ncol = 2)
+```
+
+MPG(Miles per Gallon) is probably the primary factor that many pragmatic consumers consider when buying a car. The higher the MPG of a car, the more fuel-efficient it is. Although automakers spend a lot of money to make engines more fuel efficient, cars with good fuel economy do not mean higher selling prices. From the above two figures, it can be seen that MPG has a clear negative correlation with MSRP. This is not contrary to common sense, because many high-end sports cars of car brands will give up some fuel economy for better performance and driving experience.
+
+```{r echo= FALSE, warning=FALSE, fig.height=4, fig.width=8}
+#Transmission Type
+#By Make
+TM_make <- ggplot( data = data_New3)+ 
+  aes(x = Trans.Type,y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Transmission Type", x = "Transmission Type", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+TM_year <- ggplot( data = data_New3)+ 
+  aes(x = Trans.Type ,y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Transmission Type", x = "Transmission Type", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(TM_make, TM_year, ncol = 2)
+```
+
+The transmission developed by different brands are also very different. It is difficult to judge the quality of a gearbox by the number of gears in the gearbox. But generally speaking, the more gears there are in the gearbox, the less obvious the setback when shifting gears, and the less transmission loss and more economical fuel consumption. The fewer gears, the lower the cost, the better the reliability and practicality. From the above two pictures, it is not difficult to see that automakers will use transmission with more gears on more expensive models. From the figure on the right, it can be found that the positive relationship is more obvious on newer models produced from 2010 to 2018.
+
+Then I also use the VIF test to check the correlations between the predictors. As we can see, all the predictor are below the threshold 10.
+
+```{r echo= FALSE, warning=FALSE}
+#Multilevel model
+# empty multilevel model
+mod_000 <- lmer(data= data_New4, log(MSRP) ~ Trans.Type + log(EPA.Fuel.Economy.Est...City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower...RPM +1) + Front.tire.rim.size + 
+                  (1+ log(EPA.Fuel.Economy.Est...City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower...RPM +1) + Front.tire.rim.size | Manufacturer)
+                +(1+ Trans.Type | decades_group))
+
+# details of results
+#summary(mod_000)
+
+```
+
+```{r echo= FALSE, warning=FALSE}
+# #VIF check
+
+mod_vif<- vif(mod_000)
+
+barplot(mod_vif, main = "VIF Values",horiz = TRUE,   col = "steelblue")
+
+```
+
+Then, let's see the fixed effect and the random effect from this multilevel model.
+
+```{r echo= FALSE, warning=FALSE}
+plotREsim(REsim(mod_000))
+```
+
+Here is the fixed effects:
+
+```{r echo= FALSE, warning=FALSE}
+#Fix effect
+plotFEsim(FEsim(mod_000, n.sims = 100), level = 0.8, stat = 'median', intercept = FALSE)
+```
+
+Next is the random effects:
+
+```{r echo= FALSE, warning=FALSE}
+#Random effects
+ranef(mod_000)$Manufacturer
+```
+
+```{r echo= FALSE, warning=FALSE}
+plot(mod_000 ,which =c(1,2))
+
+```
+
+Above is the residual plot for the model. We can see that the dots are symmetrically distributed around the line h = 0. Although there are some dots have very big residuals, the rest of the points are still relatively concentrated.
+
+mod_000 \<- lmer(data= data_New4, MSRP \~ Trans.Type + log(EPA.Fuel.Economy.Est...City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower...RPM +1)+ Front.tire.aspect.ratio + Front.tire.rim.size +
+
+(1+ log(EPA.Fuel.Economy.Est...City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower...RPM +1)+ Front.tire.aspect.ratio + Front.tire.rim.size \| Manufacturer)
+
++(1+ Trans.Type \| decades_group))
+
+Result After the model fitting, this is the formula I get for the MSRP: $$ log(MSRP) = Intercept + Trans.Type + log(EPA.Fuel.Economy.Est…City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower…RPM +1) + Front.tire.rim.size +(1+ log(EPA.Fuel.Economy.Est…City..MPG. + 1) + Passenger.Capacity + log(Track.Width..Front..in. + 1) + log(SAE.Net.Horsepower…RPM +1) + Front.tire.rim.size | Manufacturer)+(1+ Trans.Type | decades_group))  $$
+
+Discussion
+
+The final model is not perfect, on the contrary, it can be improved a lot. But overall, the result is quite close to what I had imagined at the beginning. The coefficient of the Transmission type, the MPG and the Passenger capacity are negative. What I didn't expect was that the Track width had such an influence on the MSRP, considering that many practical vehicles such as pickups, these cars should be more cost-effective.
+
+
+Appendix
+
+```{r echo= FALSE, warning=FALSE}
+#Track.Width..Front..in.
+#By Make
+TW_make <- ggplot( data = data_New3)+ 
+  aes(x = log(Track.Width..Front..in. + 1),y =log(MSRP), color = Manufacturer) +
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Track.Width", x = "log(Track.Width)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+TW_year<- ggplot(data = data_New3)+
+  aes(x = log(Track.Width..Front..in. + 1), y = log(MSRP), color = decades_group ) + 
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Track.Width", x = "log(Track.Width)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+TW_make
+TW_year
+```
+
+```{r echo= FALSE, warning=FALSE}
+#Base Curb Weight
+BCW_make <- ggplot( data = data_New3)+ 
+  aes(x = log(Base.Curb.Weight..lbs. + 1),y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Base Curb Weight", x = "log(Base Curb Weight)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+BCW_year<- ggplot(data = data_New3)+
+  aes(x = log(Base.Curb.Weight..lbs. + 1), y = log(MSRP), color = decades_group ) + 
+  geom_point( size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Base Curb Weight", x = "log(Base Curb Weight)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+BCW_make
+BCW_year
+```
+
+```{r echo= FALSE, warning=FALSE}
+#SAE.Net.Torque...RPM
+NT_make <- ggplot( data = data_New3)+ 
+  aes(x = log( SAE.Net.Torque...RPM+ 1),y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Net Torque", x = "log(Net Torque)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+NT_year <- ggplot( data = data_New3)+ 
+  aes(x = log(EPA.Fuel.Economy.Est...City..MPG. + 1),y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Net Torque", x = "log(Net Torque)", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+NT_make
+NT_year
+```
+
+```{r echo= FALSE, warning=FALSE}
+#Passenger Capacity
+#By Make
+PC_make <- ggplot( data = data_New3)+ 
+  aes(x = Passenger.Capacity ,y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Passenger.Capacity", x = "Passenger.Capacity", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+PC_year <- ggplot( data = data_New3)+ 
+  aes(x = Passenger.Capacity  ,y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Passenger.Capacity", x = "Passenger.Capacity", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+PC_make
+PC_year
+```
+
+```{r echo= FALSE, warning=FALSE}
+#Front.tire.aspect.ratio
+#By Make
+FTAR_make <- ggplot( data = data_New3)+ 
+  aes(x =  Front.tire.aspect.ratio ,y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Front Tire Aspect Ratio ", x = "Front Tire Aspect Ratio", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+FTAR_year <- ggplot( data = data_New3)+ 
+  aes(x = Front.tire.aspect.ratio ,y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Front Tire Aspect Ratio ", x = "Front Tire Aspect Ratio ", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+FTAR_make
+FTAR_year
+```
+
+```{r echo= FALSE, warning=FALSE}
+#Front.tire.rim.size
+#By Make
+FTRS_make <- ggplot( data = data_New3)+ 
+  aes(x = Front.tire.rim.size ,y =log(MSRP), color = Manufacturer) +
+  geom_point(size = 0.4) + 
+  geom_smooth(method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Front Tire Rim Size ", x = "Front Tire Rim Size", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#By Year
+FTRS_year <- ggplot( data = data_New3)+ 
+  aes(x = Front.tire.rim.size ,y =log(MSRP), color = decades_group) +
+  geom_point(size = 0.4) + 
+  geom_smooth( method = "lm", formula = 'y ~ x') + 
+  labs(title = "MSRP VS Front Tire Rim Size ", x = "Front Tire Rim Size", y = "log(MSRP)")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+FTRS_make
+FTRS_year
+```
